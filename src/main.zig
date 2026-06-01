@@ -47,9 +47,7 @@ test "network trains towards target" {
     }
 
     const after = nwk.forward(&input);
-    std.debug.print("afterr: {d:.4}\n", .{after[0]});
-
-    // try std.testing.expect(after[0] > before[0]);
+    std.debug.print("after: {d:.4}\n", .{after[0]});
 
     nwk.deinit();
 }
@@ -58,14 +56,11 @@ test "network trains xor" {
     const allocator = std.heap.page_allocator;
 
     var config = [2]LayerConfig{
-        .{ .inputs = 2, .outputs = 32, .is_output = false },
-        .{ .inputs = 32, .outputs = 1, .is_output = true },
+        .{ .inputs = 2, .outputs = 64, .is_output = false },
+        .{ .inputs = 64, .outputs = 1, .is_output = true },
     };
 
     var nwk: Network = try Network.init(allocator, &config);
-
-    // var input1 = [2]f32{ 0.0, 0.0 };
-    // var expected1 = [1]f32{ 0.0 };
 
     var input2 = [2]f32{ 0.0, 1.0 };
     var expected2 = [1]f32{ 1.0 };
@@ -76,15 +71,7 @@ test "network trains xor" {
     var input4 = [2]f32{ 1.0, 1.0 };
     var expected4 = [1]f32{ 0.0 };
 
-    std.debug.print("init: {d:.4} {d:.4} {d:.4}\n", .{
-        // nwk.forward(&input1)[0],
-        nwk.forward(&input2)[0],
-        nwk.forward(&input3)[0],
-        nwk.forward(&input4)[0],
-    });
-
     for (0..100000) |_| {
-        // _ = nwk.forward(&input1); try nwk.backward(&expected1, 0.01);
         _ = nwk.forward(&input2); try nwk.backward(&expected2, 0.01);
         _ = nwk.forward(&input3); try nwk.backward(&expected3, 0.01);
         _ = nwk.forward(&input4); try nwk.backward(&expected4, 0.01);
