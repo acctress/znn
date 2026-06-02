@@ -11,19 +11,29 @@ pub const Layer = struct {
     last_input: []f32,
     last_output: []f32,
 
+    // * m = average of gradients, v = average of squared gradients
+    m_weights: []f32,
+    v_weights: []f32,
+
+    m_biases: []f32,
+    v_biases: []f32,
+
     is_output: bool,
 
-    pub fn init(allocator: std.mem.Allocator, inputs: usize, outputs: usize, is_output: bool) !Layer {
-        var prng: std.Random.DefaultPrng = .init(blk: {
-            var seed: u64 = undefined;
-            try std.posix.getrandom(std.mem.asBytes(&seed));
-            break :blk seed;
-        });
+    t: u32 = 0,
 
+    pub fn init(allocator: std.mem.Allocator, inputs: usize, outputs: usize, is_output: bool) !Layer {
+        var prng = std.Random.DefaultPrng.init(9445);
         const rand = prng.random();
 
         const weights = try allocator.alloc(f32, inputs * outputs);
         const biases = try allocator.alloc(f32, outputs);
+
+        const m_weights = try allocator.alloc(f32, inputs * outputs);
+        const v_weights = try allocator.alloc(f32, inputs * outputs);
+
+        const m_biases = try allocator.alloc(f32, outputs);
+        const v_biases = try allocator.alloc(f32, outputs);
 
         const last_input = try allocator.alloc(f32, inputs);
         const last_output = try allocator.alloc(f32, outputs);
@@ -36,6 +46,22 @@ pub const Layer = struct {
             v.* = 0;
         }
 
+        for (m_weights) |*v| {
+            v.* = 0;
+        }
+
+        for (v_weights) |*v| {
+            v.* = 0;
+        }
+
+        for (m_biases) |*v| {
+            v.* = 0;
+        }
+
+        for (v_biases) |*v| {
+            v.* = 0;
+        }
+
         return .{
             .allocator = allocator,
             .weights = weights,
@@ -44,6 +70,10 @@ pub const Layer = struct {
             .outputs = outputs,
             .last_input = last_input,
             .last_output = last_output,
+            .m_weights = m_weights,
+            .v_weights = v_weights,
+            .m_biases = m_biases,
+            .v_biases = v_biases,
             .is_output = is_output,
         };
     }
@@ -53,6 +83,10 @@ pub const Layer = struct {
         self.allocator.free(self.biases);
         self.allocator.free(self.last_input);
         self.allocator.free(self.last_output);
+        self.allocator.free(self.m_weights);
+        self.allocator.free(self.v_weights);
+        self.allocator.free(self.m_biases);
+        self.allocator.free(self.v_biases);
     }
 
     pub fn forward(self: *Layer, input: []f32, output: []f32) void {
@@ -71,15 +105,43 @@ pub const Layer = struct {
     }
 
     pub fn backward(self: *Layer, output_gradient: []f32, input_gradient: []f32, learning_rate: f32) void {
+        self.t += 1;
+
         for (0..self.outputs) |i| {
             const gate: f32 = if (self.is_output) 1.0 else if (self.last_output[i] > 0) 1.0 else 0.0;
             const delta: f32 = output_gradient[i] * gate;
 
-            self.biases[i] -= learning_rate * delta;
+            var m_b = self.m_biases[i];
+            var v_b = self.v_biases[i];
+
+            m_b = 0.9 * m_b + 0.1 * delta;
+            v_b = 0.999 * v_b + 0.001 * (delta * delta);
+
+            self.m_biases[i] = m_b;
+            self.v_biases[i] = v_b;
+
+            const m_b_hat = m_b / (1 - std.math.pow(f32, 0.9, @floatFromInt(self.t)));
+            const v_b_hat = v_b / (1 - std.math.pow(f32, 0.999, @floatFromInt(self.t)));
+
+            self.biases[i] -= learning_rate * m_b_hat / (@sqrt(v_b_hat) + 1e-8);
 
             for (0..self.inputs) |j| {
                 input_gradient[j] += delta * self.weights[i * self.inputs + j];
-                self.weights[i * self.inputs + j] -= learning_rate * delta * self.last_input[j];
+
+                var m = self.m_weights[i * self.inputs + j];
+                var v = self.v_weights[i * self.inputs + j];
+
+                const grad = delta * self.last_input[j];
+                m = 0.9 * m + 0.1 * grad;
+                v = 0.999 * v + 0.001 * (grad * grad);
+
+                self.m_weights[i * self.inputs + j] = m;
+                self.v_weights[i * self.inputs + j] = v;
+
+                const m_hat = m / (1 - std.math.pow(f32, 0.9, @floatFromInt(self.t)));
+                const v_hat = v / (1 - std.math.pow(f32, 0.999, @floatFromInt(self.t)));
+
+                self.weights[i * self.inputs + j] -= learning_rate * m_hat / (@sqrt(v_hat) + 1e-8);
             }
         }
     }
@@ -129,6 +191,57 @@ pub const Network = struct {
 
         self.allocator.free(self.layers);
         self.allocator.free(self.buffers);
+    }
+
+    pub fn save(self: *Network) !void {
+        const bin = try std.fs.cwd().createFile("network.znn", .{ .read = true });
+        defer bin.close();
+
+        const n_layers: u32 = @intCast(self.layers.len);
+        try bin.writeAll(std.mem.asBytes(&n_layers));
+
+        for (self.layers) |layer| {
+            const inputs: u32 = @intCast(layer.inputs);
+            const outputs: u32 = @intCast(layer.outputs);
+            const is_out: u8 = if (layer.is_output) 1 else 0;
+            try bin.writeAll(std.mem.asBytes(&inputs));
+            try bin.writeAll(std.mem.asBytes(&outputs));
+            try bin.writeAll(std.mem.asBytes(&is_out));
+        }
+
+        for (self.layers) |layer| {
+            try bin.writeAll(std.mem.sliceAsBytes(layer.weights));
+            try bin.writeAll(std.mem.sliceAsBytes(layer.biases));
+        }
+    }
+
+    pub fn load(allocator: std.mem.Allocator, path: []const u8) !Network {
+        const bin = try std.fs.cwd().openFile(path, .{});
+        defer bin.close();
+
+        var n_layers: u32 = 0;
+        _ = try bin.readAll(std.mem.asBytes(&n_layers));
+
+        const layer_configs = try allocator.alloc(LayerConfig, n_layers);
+        for (layer_configs) |*cfg| {
+            var inputs: u32 = 0;
+            var outputs: u32 = 0;
+            var is_out: u8 = 0;
+            _ = try bin.readAll(std.mem.asBytes(&inputs));
+            _ = try bin.readAll(std.mem.asBytes(&outputs));
+            _ = try bin.readAll(std.mem.asBytes(&is_out));
+            cfg.* = .{ .inputs = inputs, .outputs = outputs, .is_output = is_out == 1 };
+        }
+
+        const nwk = try Network.init(allocator, layer_configs);
+        allocator.free(layer_configs);
+
+        for (nwk.layers) |*layer| {
+            _ = try bin.readAll(std.mem.sliceAsBytes(layer.weights));
+            _ = try bin.readAll(std.mem.sliceAsBytes(layer.biases));
+        }
+
+        return nwk;
     }
 
     pub fn forward(self: *Network, input: []f32) []f32 {
