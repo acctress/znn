@@ -26,6 +26,39 @@ test "simple inputs" {
     nwk.deinit();
 }
 
+test "multiplication generalisation" {
+    const allocator = std.heap.page_allocator;
+
+    var config = [3]LayerConfig{
+        .{ .inputs = 2, .outputs = 64, .is_output = false },
+        .{ .inputs = 64, .outputs = 32, .is_output = false },
+        .{ .inputs = 32, .outputs = 1, .is_output = true },
+    };
+
+    var nwk: Network = try Network.init(allocator, &config);
+
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rand = prng.random();
+
+    for (0..5000000) |_| {
+        const a = rand.float(f32) * 10.0;
+        const b = rand.float(f32) * 10.0;
+        var input = [2]f32{ a / 10.0, b / 10.0 };
+        var expected = [1]f32{ (a * b) / 100.0 };
+        _ = nwk.forward(&input);
+        try nwk.backward(&expected, 0.001);
+    }
+
+    const pairs = [_][2]f32{ .{3.0, 7.0}, .{9.0, 2.0}, .{5.0, 5.0}, .{8.0, 4.0} };
+    for (pairs) |pair| {
+        var input = [2]f32{ pair[0] / 10.0, pair[1] / 10.0 };
+        const result = nwk.forward(&input)[0] * 100.0;
+        std.debug.print("{d:.1} * {d:.1} = {d:.4} (expected {d:.4})\n", .{ pair[0], pair[1], result, pair[0] * pair[1] });
+    }
+
+    nwk.deinit();
+}
+
 test "network trains towards target" {
     const allocator = std.heap.page_allocator;
 
@@ -56,8 +89,8 @@ test "network trains xor" {
     const allocator = std.heap.page_allocator;
 
     var config = [2]LayerConfig{
-        .{ .inputs = 2, .outputs = 64, .is_output = false },
-        .{ .inputs = 64, .outputs = 1, .is_output = true },
+        .{ .inputs = 2, .outputs = 8, .is_output = false },
+        .{ .inputs = 8, .outputs = 1, .is_output = true },
     };
 
     var nwk: Network = try Network.init(allocator, &config);

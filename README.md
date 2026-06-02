@@ -13,10 +13,17 @@ The learning was proved by running `forward` and `backward` repeatedly until the
 
 ![img.png](img.png)
 
+I ran a 5 million iteration training stage on the network to learn multiplication, here is what it done:
+
+![img_3.png](img_3.png)
+
+It's okay, but very impressive for the size of the architecture.
+
 I tested XOR to ensure training was actually happening. I ran i through three inputs and expected results:
 ![img_1.png](img_1.png)
 
 So that's: `0 xor 1 = 1`, `1 xor 0 = 1`, `1 xor 1 = 0`. And the results are successful:
+
 ![img_2.png](img_2.png)
 
 It learnt to XOR without me telling it to do so after 100,000 iterations.
